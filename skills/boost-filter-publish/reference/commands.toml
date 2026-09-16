@@ -1,0 +1,19 @@
+# Probe commands for `verify_filters.py`: one command per filter that its
+# `match_command` is expected to select, and one it must not. These are ordinary
+# tool invocations, nothing local. A filter with no entry is probed with its own
+# name, which is enough for filters named after the tool they compact.
+[commands]
+testem-tap-passes = "npm test"
+pytest-core = "pytest -v"
+pytest-traceback-dedupe = ".venv/bin/pytest tests -q"
+unittest-rules = "python3 -m unittest discover -s tests"
+lint-row-padding = "npm run lint"
+git-diff-headers = "git diff"
+
+[nomatch]
+testem-tap-passes = "cat run.log"
+pytest-core = "python3 -m unittest discover -s tests"
+pytest-traceback-dedupe = "tail -1 pytest-85.log"
+unittest-rules = "git show HEAD:README.md | sed -n '1,80p'"
+lint-row-padding = "cat lint.log"
+git-diff-headers = "git status"

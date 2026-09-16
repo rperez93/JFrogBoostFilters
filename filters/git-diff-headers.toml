@@ -1,0 +1,123 @@
+schema_version = 1
+# Drop the redundant `--- a/<path>` / `+++ b/<path>` pair under every
+# `diff --git a/<path> b/<path>` header. The `diff --git` line already names
+# the file, so the pair is pure repetition (2 lines, ~2% of a typical patch —
+# file-header lines were 2.2% of 449 KB of recorded `git diff` stdout).
+#
+# Why this exists even though the win per file is small: Boost skips a filter
+# whose savings fall under a minimum (measured ≈ <5% AND < ~16 tokens), and the
+# built-in `git-diff` only strips the `index` line + blank lines — so on the
+# 100+ single-file `git diff pr-NN...HEAD -- <file>` reviews recorded here it
+# never applied at all (they show as unfiltered). The header pair tips those
+# over the line and the built-in's own strip then lands too.
+#
+# KEPT, deliberately — it is the signal a reader uses:
+#   * `--- /dev/null` / `+++ /dev/null` (new / deleted file), together with
+#     `new file mode` / `deleted file mode`
+#   * every `+` / `-` change line and every ` ` context line (no context
+#     trimming: the built-in's history cites retrieve rollbacks for
+#     "need full git diff", and adjacent context is what an Edit anchors on)
+#   * `@@ -a,b +c,d @@ func` hunk headers, `rename from/to`, mode changes,
+#     `Binary files differ`, `\ No newline at end of file`
+# The two rules require the `a/` / `b/` prefix AND a space-free path, so
+# `--no-prefix`, `--src-prefix`, quoted paths with spaces, and a removed
+# content line that happens to start with `-- a/` (rendered `--- a/…`, but
+# then usually containing a space) all pass through untouched.
+#
+# Complements (does not replace) the built-in `git-diff`. match_command
+# additionally accepts `git -C <dir> diff` (a flag with a separate argument)
+# and leading `VAR=value` assignments, both of which the built-in misses.
+[filters.git-diff-headers]
+description = "Drop the --- a/ +++ b/ file-header pair that repeats the diff --git line; keep /dev/null headers, hunks, changes, context."
+version = "1"
+match_command = '(^|[;&|]\s*)(?:[A-Za-z0-9_]+=\S+\s+)*(?:sudo\s+)?git(?:\s+(?:-[A-Za-z]\S*|--\S+)(?:\s+[^-\s]\S*)?)*\s+diff\b'
+match_output_select = [
+  '(?m)^diff --git ',
+]
+strip_ansi = true
+strip_lines_matching = [
+  '^--- a/\S+$',
+  '^\+\+\+ b/\S+$',
+]
+
+[[tests.git-diff-headers]]
+name = "modified file: header pair dropped, hunk header and every change/context line kept (report event 1816)"
+expect_match_output = true
+input = """diff --git a/pipeline/agents/schemas/retention/__init__.py b/pipeline/agents/schemas/retention/__init__.py
+--- a/pipeline/agents/schemas/retention/__init__.py
++++ b/pipeline/agents/schemas/retention/__init__.py
+@@ -51,6 +51,12 @@ from .intent_extractor import (
+     SourceRef,
+ )
+ from .iteration import IterationOutput, RecommendationOutput
++from .optimizer_selection import (
++    HeldCandidate,
++    OptimizerSelectionOutput,
++    SelectedCandidate,
++    SelectionRiskFlag,
++)"""
+expected = """diff --git a/pipeline/agents/schemas/retention/__init__.py b/pipeline/agents/schemas/retention/__init__.py
+@@ -51,6 +51,12 @@ from .intent_extractor import (
+     SourceRef,
+ )
+ from .iteration import IterationOutput, RecommendationOutput
++from .optimizer_selection import (
++    HeldCandidate,
++    OptimizerSelectionOutput,
++    SelectedCandidate,
++    SelectionRiskFlag,
++)"""
+
+[[tests.git-diff-headers]]
+name = "new file: --- /dev/null and new file mode survive, only the +++ b/ line goes (report event 1717)"
+expect_match_output = true
+input = """diff --git a/tests/test_channel_media_specs.py b/tests/test_channel_media_specs.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_channel_media_specs.py
+@@ -0,0 +1,87 @@
++\"\"\"Unit tests for the deterministic size-fit kernel (Phase-1 C2).
++
++Pure function, no I/O — a table of (dims, placement, expected band) plus the
++degrade-clean (`None` dims → `None`) and video-duration cases.
++\"\"\"
++from __future__ import annotations"""
+expected = """diff --git a/tests/test_channel_media_specs.py b/tests/test_channel_media_specs.py
+new file mode 100644
+--- /dev/null
+@@ -0,0 +1,87 @@
++\"\"\"Unit tests for the deterministic size-fit kernel (Phase-1 C2).
++
++Pure function, no I/O — a table of (dims, placement, expected band) plus the
++degrade-clean (`None` dims → `None`) and video-duration cases.
++\"\"\"
++from __future__ import annotations"""
+
+[[tests.git-diff-headers]]
+name = "deleted file and a removed SQL comment line that looks like a header are untouched"
+expect_match_output = true
+input = """diff --git a/sql/old.sql b/sql/old.sql
+deleted file mode 100644
+--- a/sql/old.sql
++++ /dev/null
+@@ -1,3 +0,0 @@
+--- a/ legacy note with spaces
+-SELECT 1;
+-SELECT 2;"""
+expected = """diff --git a/sql/old.sql b/sql/old.sql
+deleted file mode 100644
++++ /dev/null
+@@ -1,3 +0,0 @@
+--- a/ legacy note with spaces
+-SELECT 1;
+-SELECT 2;"""
+
+[[tests.git-diff-headers]]
+name = "git diff --stat output is not a unified diff and is not selected"
+expect_match_output = false
+input = """ docs/webapp-frontend.md | 2 +-
+ docs/frontend.md      | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)"""
+expected = """ docs/webapp-frontend.md | 2 +-
+ docs/frontend.md      | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)"""

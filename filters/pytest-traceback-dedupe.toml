@@ -1,0 +1,239 @@
+schema_version = 1
+# Collapse repeated pytest long-traceback bodies. A run where one fixture/setup
+# breaks prints the SAME multi-frame traceback (library source + locals dump)
+# once per affected test: event 1202 in `boost report` was 451 KB / 7,166 lines
+# with only 221 distinct lines (40 x "ERROR at setup of …" sharing one
+# SQLAlchemy traceback), and the built-in pytest filter saved 0.2% of it.
+#
+# This is a pure byte-identical dedupe (engine `dedupe_lines_matching`: the
+# FIRST copy of every matching line stays, later exact copies drop, nothing is
+# invented). It only targets the two line shapes that make up a frame BODY:
+#   * indented source/continuation lines of 35+ chars (`    return _bootstrap…`)
+#   * locals / argument dumps of 35+ chars (`self = <sqlalchemy… at 0x…>`)
+# The 35-char floor keeps short structural lines (`    )`, `        """`) in
+# every traceback so distinct failures still read as code.
+#
+# NEVER touched, so failure signal is intact for every test: section banners,
+# `>` (failing line), `E` (exception / assertion diff), `path:line: in func`
+# frame pointers, `path:line: ExcType` footers, `_ _ _` separators,
+# FAILED/ERROR/PASSED summary rows, `N passed, M failed` totals, and the
+# `The above exception was the direct cause…` chain lines.
+#
+# Also strips whitespace-only indented lines (pytest renders an empty SOURCE
+# line inside a frame as four spaces); true blank lines stay, matching the
+# built-in's readability choice.
+#
+# v2 (2026-09-15): selection is by COMMAND ONLY, strictly. Boost ORs
+# match_command with match_output_select (probed in a sandbox), and v1 had
+# both wide, so the dedupe ran over whatever else a command printed: in 14 of
+# 110 recorded events that removed lines it deleted repeated lines from
+# `sed -n` source views (e.g. a second `    assert r.status_code == 200,
+# r.text` in a test file), `cat` output and chat messages quoting a pytest
+# summary — content an agent reads and Edits against. v2 matches only a whole
+# command that IS a pytest run: optional setup segments (`cd`, `export`,
+# `source`, `VAR=…`), then `[VAR=… ][timeout N ][env ]` + `pytest`,
+# `path/pytest`, `python[3] [-flags] -m pytest` or `uv|poetry|pipenv|pdm|hatch
+# run [python -m] pytest`, optionally piped to tail/head/tee/cat only (RE2,
+# anchored over the whole command). Heredoc scripts, `sed …; pytest`, and
+# `pytest | grep` no longer select.
+#
+# v2 also narrows the frame-body shape from "any 4-space-indented line of 35+
+# chars" to lines that read as Python source: an identifier/decorator path
+# reaching `(`, `[`, `=` or `.` before its first space, or a statement keyword
+# (`return`, `if`, `for`, `from`, `await`, …). Replayed on the recorded
+# pytest-run corpus, v1's shape also deduped a CLI screen printed by a passing
+# test (history 16526: the second `→ __main__.py recv --limit 50, then DO what
+# they ask` hint vanished from the screen under test), docstring prose and
+# caret rows; the code shape keeps 60% of v1's dedupe bytes (219 of 363 KB)
+# and every line it removes is source.
+#
+# Complements (does not replace) pytest-core, which runs on the same output.
+[filters.pytest-traceback-dedupe]
+description = "Drop byte-identical repeats of long Python source/locals lines in real pytest runs; keep every >, E, frame pointer, summary line, prose and printed output."
+version = "2"
+match_command = '^\s*(?:(?:cd|pushd|export|source|\.|[A-Za-z_][A-Za-z0-9_]*=)(?:[^|;&\n]|>&)*(?:;|&&|\n)\s*)*(?:(?:[A-Za-z_][A-Za-z0-9_]*=[^\s|;&]*|timeout(?:(?:[ \t]|\\\n)+-[^\s|;&]+)*(?:[ \t]|\\\n)+[0-9][^\s|;&]*|env(?:(?:[ \t]|\\\n)+-u(?:[ \t]|\\\n)+[A-Za-z_][A-Za-z0-9_]*|(?:[ \t]|\\\n)+-[^\s|;&u][^\s|;&]*)*)(?:[ \t]|\\\n)+)*(?:(?:[^\s|;&]*/)?python3?(?:\.\d+)?(?:(?:[ \t]|\\\n)+-[^\s|;&m][^\s|;&]*(?:(?:[ \t]|\\\n)+[^\s|;&-][^\s|;&]*)?)*(?:[ \t]|\\\n)+-m(?:[ \t]|\\\n)+pytest|(?:uv|poetry|pipenv|pdm|hatch)(?:[ \t]|\\\n)+run(?:[ \t]|\\\n)+(?:(?:[^\s|;&]*/)?python3?(?:[ \t]|\\\n)+-m(?:[ \t]|\\\n)+)?pytest|(?:[^\s|;&]*/)?pytest)(?:(?:[ \t]|\\\n)+(?:[^\s|;&]+|[0-9]?>&[0-9]))*(?:[ \t]*\|[ \t]*(?:tail|head|tee|cat)(?:(?:[ \t]|\\\n)+(?:[^\s|;&]+|[0-9]?>&[0-9]))*)*[ \t]*\n?$'
+strip_ansi = true
+strip_lines_matching = [
+  '^ {4,}$',
+]
+dedupe_lines_matching = [
+  '^ {4,}(?:[A-Za-z_@][^ ]*[(\[=.]|[A-Za-z_][\w.]* [-+*/|&]?= |(?:return|raise|await|yield|assert|with|for|if|elif|while|async|def|class|from|import|del|lambda) ).{15,}$',
+  '^[A-Za-z_]\w* = .{30,}$',
+]
+
+[[tests.pytest-traceback-dedupe]]
+name = "second identical setup error keeps its >/E/footer lines, drops repeated frame body (report event 1202)"
+expect_match_output = true
+input = """ERROR at setup of test_ingest_row_counts
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x712dc8ab9af0>
+cursor = <sqlite3.Cursor object at 0x712dc88275c0>
+context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x712dd7da9610>
+
+    def do_executemany(self, cursor, statement, parameters, context=None):
+>       cursor.executemany(statement, parameters)
+E       sqlite3.DatabaseError: database disk image is malformed
+
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:949: DatabaseError
+
+The above exception was the direct cause of the following exception:
+
+    @pytest.fixture(scope="module")
+    def db(tmp_path_factory):
+        \"\"\"A file-backed SQLite for this module.
+    
+        Deliberately NOT `sqlite:///:memory:`: an in-memory DB lives in a single
+        \"\"\"
+        path = tmp_path_factory.mktemp("db") / "quick.sqlite"
+>       ing.ingest(url=url)
+
+tests/data/test_ingest_query.py:21: 
+ERROR at setup of test_ingest_is_idempotent
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x712dc8ab9af0>
+cursor = <sqlite3.Cursor object at 0x712dc88275c0>
+context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x712dd7da9610>
+
+    def do_executemany(self, cursor, statement, parameters, context=None):
+>       cursor.executemany(statement, parameters)
+E       sqlite3.DatabaseError: database disk image is malformed
+
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:949: DatabaseError
+
+The above exception was the direct cause of the following exception:
+
+    @pytest.fixture(scope="module")
+    def db(tmp_path_factory):
+        \"\"\"A file-backed SQLite for this module.
+    
+        Deliberately NOT `sqlite:///:memory:`: an in-memory DB lives in a single
+        \"\"\"
+        path = tmp_path_factory.mktemp("db") / "quick.sqlite"
+>       ing.ingest(url=url)
+
+tests/data/test_ingest_query.py:21: 
+short test summary info
+ERROR tests/data/test_ingest_query.py::test_ingest_row_counts - sqlite3.DatabaseError: database disk image is malformed
+ERROR tests/data/test_ingest_query.py::test_ingest_is_idempotent - sqlite3.DatabaseError: database disk image is malformed
+143 passed, 40 errors in 118.85s (0:01:58)"""
+expected = """ERROR at setup of test_ingest_row_counts
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x712dc8ab9af0>
+cursor = <sqlite3.Cursor object at 0x712dc88275c0>
+context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x712dd7da9610>
+
+    def do_executemany(self, cursor, statement, parameters, context=None):
+>       cursor.executemany(statement, parameters)
+E       sqlite3.DatabaseError: database disk image is malformed
+
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:949: DatabaseError
+
+The above exception was the direct cause of the following exception:
+
+    @pytest.fixture(scope=\"module\")
+    def db(tmp_path_factory):
+        \"\"\"A file-backed SQLite for this module.
+        Deliberately NOT `sqlite:///:memory:`: an in-memory DB lives in a single
+        \"\"\"
+        path = tmp_path_factory.mktemp(\"db\") / \"quick.sqlite\"
+>       ing.ingest(url=url)
+
+tests/data/test_ingest_query.py:21: 
+ERROR at setup of test_ingest_is_idempotent
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+
+>       cursor.executemany(statement, parameters)
+E       sqlite3.DatabaseError: database disk image is malformed
+
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:949: DatabaseError
+
+The above exception was the direct cause of the following exception:
+
+        \"\"\"A file-backed SQLite for this module.
+        Deliberately NOT `sqlite:///:memory:`: an in-memory DB lives in a single
+        \"\"\"
+>       ing.ingest(url=url)
+
+tests/data/test_ingest_query.py:21: 
+short test summary info
+ERROR tests/data/test_ingest_query.py::test_ingest_row_counts - sqlite3.DatabaseError: database disk image is malformed
+ERROR tests/data/test_ingest_query.py::test_ingest_is_idempotent - sqlite3.DatabaseError: database disk image is malformed
+143 passed, 40 errors in 118.85s (0:01:58)"""
+
+[[tests.pytest-traceback-dedupe]]
+name = "distinct failures are untouched: short lines, >, E, assertion diffs and summary all survive"
+expect_match_output = true
+input = """FAILURES
+test_three
+    def test_three():
+>       assert add(1, 1) == 3
+E       assert 2 == 3
+E         +2
+E         -3
+
+tests/test_app.py:10: AssertionError
+test_four
+    def test_four():
+>       assert add(2, 2) == 5
+E       assert 4 == 5
+
+tests/test_app.py:14: AssertionError
+short test summary info
+FAILED tests/test_app.py::test_three - assert 2 == 3
+FAILED tests/test_app.py::test_four - assert 4 == 5
+2 failed, 1 passed in 0.05s"""
+expected = """FAILURES
+test_three
+    def test_three():
+>       assert add(1, 1) == 3
+E       assert 2 == 3
+E         +2
+E         -3
+
+tests/test_app.py:10: AssertionError
+test_four
+    def test_four():
+>       assert add(2, 2) == 5
+E       assert 4 == 5
+
+tests/test_app.py:14: AssertionError
+short test summary info
+FAILED tests/test_app.py::test_three - assert 2 == 3
+FAILED tests/test_app.py::test_four - assert 4 == 5
+2 failed, 1 passed in 0.05s"""
+
+[[tests.pytest-traceback-dedupe]]
+name = "a monitor loop tailing pytest-85.log is not a pytest run"
+expect_match_output = false
+input = """Docs check: ok
+4312 passed in 512.10s"""
+expected = """Docs check: ok
+4312 passed in 512.10s"""
+
+[[tests.pytest-traceback-dedupe]]
+name = "screens printed by a passing test keep their repeated hint rows (history 16526)"
+expect_match_output = true
+input = """  AFTER A JOIN:
+    ! acting     1 unread — nobody has acted on them
+    → __main__.py recv --limit 50, then DO what they ask
+    fix these before you carry on — they are why the other agent is waiting
+  TRUNCATED STATUS:
+    ! acting     1 unread — nobody has acted on them
+    → __main__.py recv --limit 50, then DO what they ask
+    fix these before you carry on — they are why the other agent is waiting
+    
+8 passed in 0.27s"""
+expected = """  AFTER A JOIN:
+    ! acting     1 unread — nobody has acted on them
+    → __main__.py recv --limit 50, then DO what they ask
+    fix these before you carry on — they are why the other agent is waiting
+  TRUNCATED STATUS:
+    ! acting     1 unread — nobody has acted on them
+    → __main__.py recv --limit 50, then DO what they ask
+    fix these before you carry on — they are why the other agent is waiting
+    
+8 passed in 0.27s"""

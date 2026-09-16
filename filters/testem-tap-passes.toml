@@ -1,0 +1,178 @@
+schema_version = 1
+# Drop the passing `ok N <Browser> <ver> - [N ms] - <test name>` TAP rows that
+# ember-qunit / testem prints for every green test in a FULL run.
+#
+# Why this exists: no Boost filter covers testem TAP. `npm test` for an
+# Ember + vite app is picked up by the builtin npm/vite/go/node-test filters,
+# none of which touch these rows (node-test only knows `ok N -` without a
+# launcher). Measured over 30 days of recorded Claude + Codex stdout: 2,484
+# testem runs, 48.4 MB, 4% saved; passing rows were 31.5 MB of it. A full run
+# is ~2,230 rows / ~250 KB whose only content beyond `# pass 2230` is the list
+# of green names.
+#
+# Selection is by COMMAND ONLY. Boost ORs `match_command` with
+# `match_output_select` (probed: either alone activates a filter), so an output
+# fingerprint would also fire on `cat run.log` / `grep "^(ok|# tests)" run.log`
+# and strip rows an agent asked for. match_command is RE2 (no lookahead —
+# a `(?!` pattern silently never matches), so it is written positively and
+# anchored over the WHOLE command:
+#   * optional setup segments only: `cd`, `pushd`, `export`, `source`, `VAR=…`
+#     joined by `;` / `&&` / newline;
+#   * then the suite runner itself: `npm test`, `npm run test[:x]`,
+#     `[npx|path/]ember test`, `testem ci` (with `VAR=…` / `timeout N` heads);
+#   * every argument token must not start with `-f` / `-m` / `--fi…` / `--mo…`,
+#     so `--filter` / `--module` (scoped runs, whose ok rows prove which tests
+#     ran) never match;
+#   * only `| tail` / `| head` / `| tee` / `| cat` may follow — any grep, rg,
+#     awk, sed, cut, redirect-then-grep, or a second command fails the match.
+# Validated with RE2 on 30 days of recorded commands: 177 matches, 0 carrying a
+# --filter or a line selector; 0 of them were aborted runs (ok rows without the
+# `# tests N` footer), so no footer gate is needed.
+#
+# KEPT, always: every `not ok` row and its `---` … `...` YAML block (actual,
+# expected, stack, message, browser log), `ok … # skip` / `# todo` rows,
+# `1..N`, `# tests/pass/skip/todo/fail`, console `{"type":"error"…}` lines, the
+# vite/embroider build lines and every warning.
+#
+# Also: byte-identical repeats of console `{"type":"warn",…}` lines are
+# dropped after their FIRST copy (engine `dedupe_lines_matching`). Measured:
+# one Ember "Binding style attributes may introduce cross-site scripting"
+# warning accounts for 14,743 lines / ~5 MB; the first copy still states it.
+[filters.testem-tap-passes]
+description = "Drop passing `ok N <Browser> - [N ms] -` rows from full, unpiped ember/testem runs; keep not ok blocks, skip/todo, summary, errors; first copy of repeated console warns."
+version = "1"
+match_command = '^\s*(?:(?:cd|pushd|export|source|\.|[A-Za-z_][A-Za-z0-9_]*=)(?:[^|;&\n]|>&)*(?:;|&&|\n)\s*)*(?:(?:[A-Za-z_][A-Za-z0-9_]*=[^\s|;&]*|timeout(?:(?:[ \t]|\\\n)+-[^\s|;&]+)*(?:[ \t]|\\\n)+[0-9][^\s|;&]*|env(?:(?:[ \t]|\\\n)+-u(?:[ \t]|\\\n)+[A-Za-z_][A-Za-z0-9_]*|(?:[ \t]|\\\n)+-[^\s|;&u][^\s|;&]*)*)(?:[ \t]|\\\n)+)*(?:npx(?:[ \t]|\\\n)+|[^\s|;&]*/)?(?:npm(?:[ \t]|\\\n)+(?:run(?:[ \t]|\\\n)+)?test(?::[^\s|;&]+)?|ember(?:[ \t]|\\\n)+test|testem(?:[ \t]|\\\n)+ci)(?:(?:[ \t]|\\\n)+(?:[^\s|;&-][^\s|;&]*|-[^\s|;&fm-][^\s|;&]*|--[^\s|;&fm][^\s|;&]*|--f[^\s|;&i][^\s|;&]*|--m[^\s|;&o][^\s|;&]*|[0-9]?>&[0-9]))*(?:[ \t]*\|[ \t]*(?:tail|head|tee|cat)(?:(?:[ \t]|\\\n)+(?:[^\s|;&]+|[0-9]?>&[0-9]))*)*[ \t]*\n?$'
+strip_ansi = true
+strip_lines = [
+  { pattern = '^ok \d+ [A-Za-z][\w ]*? \d+(?:\.\d+)* - \[\d+ ms\] - ', unless = '#\s*(?:skip|todo)\b' },
+]
+dedupe_lines_matching = [
+  '^\s*\{"type":"warn","text":".{40,}\}\s*$',
+]
+
+[[tests.testem-tap-passes]]
+name = "full run with two failures: green rows go, not ok rows + YAML blocks + footer stay (history 108421 shape)"
+expect_match_output = true
+input = """ok 13 Chrome 152.0 - [41 ms] - Integration | Component | acme-chat: the panel opens from the rail
+not ok 14 Chrome 152.0 - [111 ms] - Integration | Component | acme-chat: the screen context carries the route FILTERS and the visible SCREEN TEXT on every turn
+    ---
+        stack: >
+            Error: Can not `fillIn` disabled '[data-test-acme-input]'.
+        message: >
+            Promise rejected during "the screen context carries the route FILTERS and the visible SCREEN TEXT on every turn": Can not `fillIn` disabled '[data-test-acme-input]'.
+        negative: >
+            false
+        browser log: |
+    ...
+ok 15 Chrome 152.0 - [23 ms] - Integration | Component | acme-chat: a draft survives a reload
+ok 16 Chrome 152.0 - [19 ms] - Integration | Component | acme-chat: sending clears the input
+not ok 37 Chrome 152.0 - [85 ms] - Integration | Component | acme-chat: closing preserves the conversation and draft, and Escape returns focus
+    ---
+        actual: >
+            chat-panel is-open
+        expected: >
+            not: is-open
+        stack: >
+                at DOMAssertions.doesNotHaveClass (http://localhost:7357/assets/tests-Rk7zs3Wm.js:70824:12)
+        message: >
+            Element [data-test-acme-panel] does not have CSS class "is-open"
+        negative: >
+            false
+        browser log: |
+    ...
+ok 38 Chrome 152.0 - [0 ms] - ember-qunit: Ember.onerror validation: Ember.onerror is functioning properly
+
+1..38
+# tests 38
+# pass  36
+# skip  0
+# todo  0
+# fail  2"""
+expected = """not ok 14 Chrome 152.0 - [111 ms] - Integration | Component | acme-chat: the screen context carries the route FILTERS and the visible SCREEN TEXT on every turn
+    ---
+        stack: >
+            Error: Can not `fillIn` disabled '[data-test-acme-input]'.
+        message: >
+            Promise rejected during "the screen context carries the route FILTERS and the visible SCREEN TEXT on every turn": Can not `fillIn` disabled '[data-test-acme-input]'.
+        negative: >
+            false
+        browser log: |
+    ...
+not ok 37 Chrome 152.0 - [85 ms] - Integration | Component | acme-chat: closing preserves the conversation and draft, and Escape returns focus
+    ---
+        actual: >
+            chat-panel is-open
+        expected: >
+            not: is-open
+        stack: >
+                at DOMAssertions.doesNotHaveClass (http://localhost:7357/assets/tests-Rk7zs3Wm.js:70824:12)
+        message: >
+            Element [data-test-acme-panel] does not have CSS class "is-open"
+        negative: >
+            false
+        browser log: |
+    ...
+
+1..38
+# tests 38
+# pass  36
+# skip  0
+# todo  0
+# fail  2"""
+
+[[tests.testem-tap-passes]]
+name = "all green: build lines, console errors, first warn and the footer survive; repeated warn copies and ok rows go (history 88588 shape)"
+expect_match_output = true
+input = """> webapp@0.0.0 test
+> vite build --mode development && ember test --path dist --test-port=0
+✓ 1646 modules transformed.
+            {"type":"warn","text":"WARNING: Binding style attributes may introduce cross-site scripting vulnerabilities; please ensure that values being bound are properly escaped."}
+ok 1 Chrome 152.0 - [412 ms] - Integration | Component | workspace/deal-wizard: step one renders
+            {"type":"error","text":"Error while processing route: brand.notices Permission denied for brand.notices (requires notices.view)"}
+            {"type":"warn","text":"WARNING: Binding style attributes may introduce cross-site scripting vulnerabilities; please ensure that values being bound are properly escaped."}
+ok 2 Chrome 152.0 - [23 ms] - Unit | Utility | canvas: a text matrix passes through unformatted
+ok 3 Firefox 128.0 - [0 ms] - ember-qunit: Ember.onerror validation: Ember.onerror is functioning properly
+
+1..3
+# tests 3
+# pass  3
+# skip  0
+# todo  0
+# fail  0
+
+# ok"""
+expected = """> webapp@0.0.0 test
+> vite build --mode development && ember test --path dist --test-port=0
+✓ 1646 modules transformed.
+            {"type":"warn","text":"WARNING: Binding style attributes may introduce cross-site scripting vulnerabilities; please ensure that values being bound are properly escaped."}
+            {"type":"error","text":"Error while processing route: brand.notices Permission denied for brand.notices (requires notices.view)"}
+
+1..3
+# tests 3
+# pass  3
+# skip  0
+# todo  0
+# fail  0
+
+# ok"""
+
+[[tests.testem-tap-passes]]
+name = "skip and todo rows are itemized and stay"
+expect_match_output = true
+input = """ok 1 Chrome 152.0 - [3 ms] - Unit | Utility | format-money: rounds half up
+ok 2 Chrome 152.0 - [0 ms] - Unit | Utility | format-money: locale-aware separators # skip
+ok 3 Chrome 152.0 - [0 ms] - Unit | Utility | format-money: currency codes # todo
+1..3
+# tests 3
+# pass  1
+# skip  1
+# todo  1
+# fail  0"""
+expected = """ok 2 Chrome 152.0 - [0 ms] - Unit | Utility | format-money: locale-aware separators # skip
+ok 3 Chrome 152.0 - [0 ms] - Unit | Utility | format-money: currency codes # todo
+1..3
+# tests 3
+# pass  1
+# skip  1
+# todo  1
+# fail  0"""

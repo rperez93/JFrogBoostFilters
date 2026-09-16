@@ -1,0 +1,92 @@
+schema_version = 1
+# Remove the column-alignment padding that stylelint / eslint / ember-template-
+# lint put around every problem row of `npm run lint` (the project runs them through
+# `concurrently`, prefixing each row with `[lint:css]`, `[lint:js]`, …).
+#
+# Why this exists: 16 recorded `npm run lint` runs (Codex) were 9.5 MB and Boost
+# saved 0% — the builtin eslint filter only strips blanks. ~36k stylelint rows
+# per run are padded to a fixed table width, e.g.
+#   `[lint:css]    8:1   ✖  Expected empty line before rule<56 spaces>rule-empty-line-before`
+#   `[lint:css]    25:14  ✖  Expected "#ffffff" to be "#fff"<150 trailing spaces>`
+# Measured: runs of 2+ spaces between words were 6.0 MB (64%) of those bytes.
+#
+# Transparency: nothing is removed but alignment whitespace, and only on rows
+# with the linter problem grammar `[prefix] L:C <severity> <message> <rule>`.
+# Every row, position, severity, message and rule name stays; a double space
+# INSIDE a message is left alone (the rewrite anchors on the columns, not on
+# every space run). Rule names stay separated from the message by two spaces.
+#
+# Selected by COMMAND ONLY (Boost ORs match_command with match_output_select,
+# so no output fingerprint): setup segments, then `npm run lint[:x]` /
+# `npx stylelint` / `npx eslint` / `npx ember-template-lint`, optionally piped
+# to tail/head/tee/cat — RE2, anchored over the whole command.
+[filters.lint-row-padding]
+description = "Collapse column padding in stylelint/eslint/template-lint problem rows of `npm run lint`; keep every row, position, severity, message and rule."
+version = "1"
+match_command = '^\s*(?:(?:cd|pushd|export|source|\.|[A-Za-z_][A-Za-z0-9_]*=)(?:[^|;&\n]|>&)*(?:;|&&|\n)\s*)*(?:(?:[A-Za-z_][A-Za-z0-9_]*=[^\s|;&]*|timeout(?:(?:[ \t]|\\\n)+-[^\s|;&]+)*(?:[ \t]|\\\n)+[0-9][^\s|;&]*|env(?:(?:[ \t]|\\\n)+-u(?:[ \t]|\\\n)+[A-Za-z_][A-Za-z0-9_]*|(?:[ \t]|\\\n)+-[^\s|;&u][^\s|;&]*)*)(?:[ \t]|\\\n)+)*(?:npm(?:[ \t]|\\\n)+run(?:[ \t]|\\\n)+lint(?::[^\s|;&]+)?|npx(?:[ \t]|\\\n)+(?:stylelint|eslint|ember-template-lint))(?:(?:[ \t]|\\\n)+(?:[^\s|;&]+|[0-9]?>&[0-9]))*(?:[ \t]*\|[ \t]*(?:tail|head|tee|cat)(?:(?:[ \t]|\\\n)+(?:[^\s|;&]+|[0-9]?>&[0-9]))*)*[ \t]*\n?$'
+strip_ansi = true
+
+# 1. trailing padding after a problem row
+[[filters.lint-row-padding.replace]]
+pattern = '^((?:\[[\w:.-]+\] +)?\s*\d+:\d+ +(?:✖|⚠|error|warning) .*?\S)[ \t]+$'
+replacement = "$1"
+
+# 2. padding between the position, severity and message columns
+[[filters.lint-row-padding.replace]]
+pattern = '^(\[[\w:.-]+\] )? *\s*(\d+:\d+) +(✖|⚠|error|warning) +'
+replacement = "${1}${2} ${3} "
+
+# 3. padding between the message and the trailing rule-name column
+[[filters.lint-row-padding.replace]]
+pattern = '^((?:\[[\w:.-]+\] )?\d+:\d+ (?:✖|⚠|error|warning) .*?\S) {3,}([\w@/.-]+)$'
+replacement = "${1}  ${2}"
+
+[[tests.lint-row-padding]]
+name = "stylelint rows under concurrently: column and rule padding collapse, every field stays (history 86449)"
+expect_match_output = true
+input = """[lint:css] app/styles/deal-goals.css
+[lint:css]     1:14  ✖  Expected class selector ".deal-plan-v7__header" to be kebab-case                        selector-class-pattern
+[lint:css]     8:1   ✖  Expected empty line before rule                                                        rule-empty-line-before
+[lint:css]   186:1   ✖  Unexpected duplicate selector ".deal-plan-v7 .deal-wizard--page", first used at line 18  no-duplicate-selectors
+[lint:css] app/styles/tailwind.css
+[lint:css]       1:9   ✖  Expected "'tailwindcss'" to be "url('tailwindcss')"
+[lint:css]      25:14  ✖  Expected "#ffffff" to be "#fff"                                                                                                                                                                             """
+expected = """[lint:css] app/styles/deal-goals.css
+[lint:css] 1:14 ✖ Expected class selector ".deal-plan-v7__header" to be kebab-case  selector-class-pattern
+[lint:css] 8:1 ✖ Expected empty line before rule  rule-empty-line-before
+[lint:css] 186:1 ✖ Unexpected duplicate selector ".deal-plan-v7 .deal-wizard--page", first used at line 18  no-duplicate-selectors
+[lint:css] app/styles/tailwind.css
+[lint:css] 1:9 ✖ Expected "'tailwindcss'" to be "url('tailwindcss')"
+[lint:css] 25:14 ✖ Expected "#ffffff" to be "#fff\""""
+
+[[tests.lint-row-padding]]
+name = "eslint error row, summary, prettier warnings and exit codes are kept; only column padding changes (history 86449 tail)"
+expect_match_output = true
+input = """[lint:css]   169:8   ✖  Expected "context" media feature range notation                                        media-feature-range-notation
+[lint:css]   213:25  ✖  Expected modern color-function notation                                                color-function-notation
+[lint:format] [warn] tests/unit/utils/live-stats-metrics-test.js
+[lint:format] [warn] Code style issues found in 9 files. Run Prettier with --write to fix.
+[lint:format] npm run lint:format exited with code 1
+[lint:js] $PWD/tests/integration/components/auth/login-form-throttle-test.gjs
+[lint:js]   70:3  error  Do not call `settled()` right after a test helper that already calls it internally  ember/no-settled-after-test-helper
+[lint:js]
+[lint:js] ✖ 1 problem (1 error, 0 warnings)
+[lint:js]   1 error and 0 warnings potentially fixable with the `--fix` option.
+[lint:js] npm run lint:js exited with code 1"""
+expected = """[lint:css] 169:8 ✖ Expected "context" media feature range notation  media-feature-range-notation
+[lint:css] 213:25 ✖ Expected modern color-function notation  color-function-notation
+[lint:format] [warn] tests/unit/utils/live-stats-metrics-test.js
+[lint:format] [warn] Code style issues found in 9 files. Run Prettier with --write to fix.
+[lint:format] npm run lint:format exited with code 1
+[lint:js] $PWD/tests/integration/components/auth/login-form-throttle-test.gjs
+[lint:js] 70:3 error Do not call `settled()` right after a test helper that already calls it internally  ember/no-settled-after-test-helper
+[lint:js]
+[lint:js] ✖ 1 problem (1 error, 0 warnings)
+[lint:js]   1 error and 0 warnings potentially fixable with the `--fix` option.
+[lint:js] npm run lint:js exited with code 1"""
+
+[[tests.lint-row-padding]]
+name = "a double space inside a message is not a column gap and stays"
+expect_match_output = true
+input = """[lint:css]    12:3   ✖  Expected "a  b" to be "a b"                                   declaration-value-spacing"""
+expected = """[lint:css] 12:3 ✖ Expected "a  b" to be "a b"  declaration-value-spacing"""

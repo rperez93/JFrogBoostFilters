@@ -1,0 +1,125 @@
+schema_version = 1
+# Drop the decorative 70-char `======` / `------` separator rules that Python's
+# `unittest` prints around every failure header and above the final summary, plus
+# the `ResourceWarning: Enable tracemalloc ...` boilerplate line.
+#
+# v2 (2026-09-15) — v1 was disabled after 6 attributed retrieves. None were its
+# doing (history 23528, 37901: pytest runs, 0 bytes changed by this filter;
+# 59561: `git show x.html | sed -n`, the html filter blanked it). They were
+# pinned on it because v1's match_command matched ANY command containing
+# `grep|sed|tail|head|rg|python`. v1's premise was also wrong: Boost ORs
+# match_command with match_output_select (probed in a sandbox — either alone
+# activates a filter), so the `^Ran N tests in` fingerprint did NOT gate the
+# broad command regex. v1 therefore stripped every 60+ `=`/`-` line from any
+# grep/sed/head/tail/python output (markdown rules, tables, removed diff lines
+# an Edit could anchor on), and the fingerprint alone also fired on
+# a chat CLI's output, `git show`, `git diff` and `nl -ba` output that merely quoted
+# a unittest summary (154 of 184 recorded outputs carrying `Ran N tests`).
+#
+# v2 selects by COMMAND ONLY (no match_output_select), with an RE2 regex
+# anchored over the whole command: optional setup segments (`cd`, `export`,
+# `source`, `VAR=…`), then `[path/]python[3[.N]] [-flags] -m unittest …` or
+# `… manage.py test …`, optionally followed only by `| tail` / `| head` /
+# `| tee` / `| cat`. Saved-log replays (`sed -n … t1.out`) are no longer
+# covered: that was the price of v1's reach. Validated on 30 days of recorded
+# commands: 32 matches, 0 carrying grep/rg/awk/sed/cut; `… | grep -E
+# "^(Ran|OK|FAILED)"` runs do not match (their output holds no rules anyway).
+#
+# KEPT, deliberately — this is the whole point of reading a test run:
+#   * `FAIL:` / `ERROR:` header lines and the test id that follows them
+#   * every `Traceback` frame, `File "...", line N, in ...`, source echo, the
+#     `^^^^^` caret pointers, and the final exception line
+#   * `Ran N tests in Xs`, `OK`, `OK (skipped=N)`, `FAILED (failures=1, errors=2)`
+#   * per-test `... ok` / `... FAIL` lines produced by `-v` / `--verbose`
+#   * the informative `path:line: ResourceWarning: unclosed file <...>` line —
+#     only the follow-on "Enable tracemalloc" hint, which names no file and no
+#     line, is dropped
+#
+# NOT stripped, on measurement: progress-dot lines. In the v1 corpus 3 of 4
+# dot lines interleaved dots with application stdout on the same line.
+[filters.unittest-rules]
+description = "Drop unittest's decorative ==== / ---- separator rules and the tracemalloc hint in real `python -m unittest` / `manage.py test` runs; keep every FAIL/ERROR, traceback, caret, verbose per-test line and summary."
+version = "2"
+match_command = '^\s*(?:(?:cd|pushd|export|source|\.|[A-Za-z_][A-Za-z0-9_]*=)(?:[^|;&\n]|>&)*(?:;|&&|\n)\s*)*(?:(?:[A-Za-z_][A-Za-z0-9_]*=[^\s|;&]*|timeout(?:(?:[ \t]|\\\n)+-[^\s|;&]+)*(?:[ \t]|\\\n)+[0-9][^\s|;&]*|env(?:(?:[ \t]|\\\n)+-u(?:[ \t]|\\\n)+[A-Za-z_][A-Za-z0-9_]*|(?:[ \t]|\\\n)+-[^\s|;&u][^\s|;&]*)*)(?:[ \t]|\\\n)+)*(?:[^\s|;&]*/)?python3?(?:\.\d+)?(?:(?:[ \t]|\\\n)+-[^\s|;&m][^\s|;&]*(?:(?:[ \t]|\\\n)+[^\s|;&-][^\s|;&]*)?)*(?:[ \t]|\\\n)+(?:-m(?:[ \t]|\\\n)+unittest|[^\s|;&]*manage\.py(?:[ \t]|\\\n)+test)(?:(?:[ \t]|\\\n)+(?:[^\s|;&]+|[0-9]?>&[0-9]))*(?:[ \t]*\|[ \t]*(?:tail|head|tee|cat)(?:(?:[ \t]|\\\n)+(?:[^\s|;&]+|[0-9]?>&[0-9]))*)*[ \t]*\n?$'
+strip_ansi = true
+strip_lines_matching = [
+  '^={60,}$',
+  '^-{60,}$',
+  '^ResourceWarning: Enable tracemalloc to get the object allocation traceback$',
+]
+[[tests.unittest-rules]]
+name = "real ERROR block: rules dropped; header, every frame, caret pointers and summary kept (report event, speechkit t1.out)"
+expect_match_output = true
+input = '''======================================================================
+ERROR: test_each_tone_segment_is_converted_separately (test_speechkit.RvcProviderTest.test_each_tone_segment_is_converted_separately)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tests/test_speechkit.py", line 683, in test_each_tone_segment_is_converted_separately
+    textutil.synthesize_chunked(
+  File "/src/speechkit/providers/rvc.py", line 167, in _synthesize_one
+    overrides = base.speed_settings(speed)
+                ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'FakeBase' object has no attribute 'speed_settings'
+----------------------------------------------------------------------
+Ran 232 tests in 18.319s
+
+FAILED (errors=1)'''
+expected = '''ERROR: test_each_tone_segment_is_converted_separately (test_speechkit.RvcProviderTest.test_each_tone_segment_is_converted_separately)
+Traceback (most recent call last):
+  File "/tests/test_speechkit.py", line 683, in test_each_tone_segment_is_converted_separately
+    textutil.synthesize_chunked(
+  File "/src/speechkit/providers/rvc.py", line 167, in _synthesize_one
+    overrides = base.speed_settings(speed)
+                ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'FakeBase' object has no attribute 'speed_settings'
+Ran 232 tests in 18.319s
+
+FAILED (errors=1)'''
+
+[[tests.unittest-rules]]
+name = "the informative ResourceWarning survives; only the tracemalloc hint that names no file is dropped"
+expect_match_output = true
+input = '''/tests/test_speechkit.py:2362: ResourceWarning: unclosed file <_io.BufferedWriter name='/tmp/0000.wav'>
+  provider.run = lambda cmd, **kw: open(cmd[cmd.index("-w") + 1], "wb").write(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+Ran 246 tests in 18.850s
+
+OK'''
+expected = '''/tests/test_speechkit.py:2362: ResourceWarning: unclosed file <_io.BufferedWriter name='/tmp/0000.wav'>
+  provider.run = lambda cmd, **kw: open(cmd[cmd.index("-w") + 1], "wb").write(
+Ran 246 tests in 18.850s
+
+OK'''
+
+[[tests.unittest-rules]]
+name = "a progress line interleaved with application stdout is left completely untouched"
+expect_match_output = true
+input = '''........  chunk 1/4  chunk 2/4  chunk 3/4  chunk 4/4                        .  chunk 1/2  chunk 2/2
+======================================================================
+FAIL: test_wsl_prefers_the_windows_player (test_speechkit.PlayerSelectionTest)
+----------------------------------------------------------------------
+AssertionError: 'powershell.exe' not found in 'ps'
+Ran 246 tests in 18.850s
+
+FAILED (failures=1)'''
+expected = '''........  chunk 1/4  chunk 2/4  chunk 3/4  chunk 4/4                        .  chunk 1/2  chunk 2/2
+FAIL: test_wsl_prefers_the_windows_player (test_speechkit.PlayerSelectionTest)
+AssertionError: 'powershell.exe' not found in 'ps'
+Ran 246 tests in 18.850s
+
+FAILED (failures=1)'''
+
+[[tests.unittest-rules]]
+name = "verbose per-test lines are kept verbatim under -v"
+expect_match_output = true
+input = '''test_speed_settings (test_speechkit.RvcProviderTest.test_speed_settings) ... ok
+test_each_tone_segment (test_speechkit.RvcProviderTest.test_each_tone_segment) ... FAIL
+----------------------------------------------------------------------
+Ran 2 tests in 0.412s
+
+FAILED (failures=1)'''
+expected = '''test_speed_settings (test_speechkit.RvcProviderTest.test_speed_settings) ... ok
+test_each_tone_segment (test_speechkit.RvcProviderTest.test_each_tone_segment) ... FAIL
+Ran 2 tests in 0.412s
+
+FAILED (failures=1)'''

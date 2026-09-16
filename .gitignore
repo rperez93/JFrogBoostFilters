@@ -1,0 +1,6 @@
+# The alias mapping lives in ~/.config/boost-filter-publish/ and must never be
+# committed; this guards against a stray copy.
+aliases.toml
+scrub-report.json
+__pycache__/
+*.pyc
