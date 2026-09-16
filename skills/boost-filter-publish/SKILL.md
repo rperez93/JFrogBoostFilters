@@ -72,7 +72,8 @@ The leak scan looks for alias terms, the local user and host names, home paths,
 e-mail addresses, UUIDs and credential-shaped strings. The engine gate runs every
 filter's own test cases through the real `boost` binary under a throwaway `HOME`
 with all other filters disabled, which proves the scrubbed fixtures still produce
-their expected output. If either fails, fix and re-run — do not publish.
+their expected output. It also runs `boost filters validate` on each file, whose checks tighten
+between Boost releases — a filter set that passed last week can fail today. If either fails, fix and re-run — do not publish.
 
 **4. Copy in and refresh the metrics.**
 

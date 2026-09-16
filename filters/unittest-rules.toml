@@ -7,10 +7,10 @@ schema_version = 1
 # doing (history 23528, 37901: pytest runs, 0 bytes changed by this filter;
 # 59561: `git show x.html | sed -n`, the html filter blanked it). They were
 # pinned on it because v1's match_command matched ANY command containing
-# `grep|sed|tail|head|rg|python`. v1's premise was also wrong: Boost ORs
-# match_command with match_output_select (probed in a sandbox — either alone
-# activates a filter), so the `^Ran N tests in` fingerprint did NOT gate the
-# broad command regex. v1 therefore stripped every 60+ `=`/`-` line from any
+# `grep|sed|tail|head|rg|python`. v1's premise was also wrong: Boost (before
+# v0.13.20, jfrog/boost#84) ORed match_command with match_output_select, so the
+# `^Ran N tests in` fingerprint did NOT gate the broad command regex. v1
+# therefore stripped every 60+ `=`/`-` line from any
 # grep/sed/head/tail/python output (markdown rules, tables, removed diff lines
 # an Edit could anchor on), and the fingerprint alone also fired on
 # a chat CLI's output, `git show`, `git diff` and `nl -ba` output that merely quoted
@@ -24,6 +24,9 @@ schema_version = 1
 # covered: that was the price of v1's reach. Validated on 30 days of recorded
 # commands: 32 matches, 0 carrying grep/rg/awk/sed/cut; `… | grep -E
 # "^(Ran|OK|FAILED)"` runs do not match (their output holds no rules anyway).
+# match_mode = "all" (v0.13.20+) would allow `^Ran N tests in` back as a gate;
+# replayed on the same 32 commands it would block nothing the filter changes,
+# so the filter stays command-only.
 #
 # KEPT, deliberately — this is the whole point of reading a test run:
 #   * `FAIL:` / `ERROR:` header lines and the test id that follows them
@@ -49,7 +52,6 @@ strip_lines_matching = [
 ]
 [[tests.unittest-rules]]
 name = "real ERROR block: rules dropped; header, every frame, caret pointers and summary kept (report event, speechkit t1.out)"
-expect_match_output = true
 input = '''======================================================================
 ERROR: test_each_tone_segment_is_converted_separately (test_speechkit.RvcProviderTest.test_each_tone_segment_is_converted_separately)
 ----------------------------------------------------------------------
@@ -78,7 +80,6 @@ FAILED (errors=1)'''
 
 [[tests.unittest-rules]]
 name = "the informative ResourceWarning survives; only the tracemalloc hint that names no file is dropped"
-expect_match_output = true
 input = '''/tests/test_speechkit.py:2362: ResourceWarning: unclosed file <_io.BufferedWriter name='/tmp/0000.wav'>
   provider.run = lambda cmd, **kw: open(cmd[cmd.index("-w") + 1], "wb").write(
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
@@ -93,7 +94,6 @@ OK'''
 
 [[tests.unittest-rules]]
 name = "a progress line interleaved with application stdout is left completely untouched"
-expect_match_output = true
 input = '''........  chunk 1/4  chunk 2/4  chunk 3/4  chunk 4/4                        .  chunk 1/2  chunk 2/2
 ======================================================================
 FAIL: test_wsl_prefers_the_windows_player (test_speechkit.PlayerSelectionTest)
@@ -111,7 +111,6 @@ FAILED (failures=1)'''
 
 [[tests.unittest-rules]]
 name = "verbose per-test lines are kept verbatim under -v"
-expect_match_output = true
 input = '''test_speed_settings (test_speechkit.RvcProviderTest.test_speed_settings) ... ok
 test_each_tone_segment (test_speechkit.RvcProviderTest.test_each_tone_segment) ... FAIL
 ----------------------------------------------------------------------

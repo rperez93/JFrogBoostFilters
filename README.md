@@ -15,9 +15,11 @@ Every filter here is tuned to one rule: **savings must never cost the agent sign
 | `pytest-core` | 1 | A replacement for the built-in `pytest` filter, whose progress-line rule also deleted the per-test rows that `-v` prints. Keeps `-v` and `-rA` rows, bare rules and every failure; still drops the session preamble and per-file progress. |
 | `pytest-traceback-dedupe` | 2 | Drops byte-identical repeats of long Python source and locals lines when one fixture breaks a whole suite. Keeps every `>`, `E`, frame pointer and summary line — and, since v2, anything that is not source code. |
 | `unittest-rules` | 2 | Drops `unittest`'s decorative `====`/`----` rules and the tracemalloc hint in real `python -m unittest` / `manage.py test` runs. Keeps every `FAIL`/`ERROR`, traceback, caret row and summary. |
-| `git-diff-headers` | 1 | Drops the `--- a/… / +++ b/…` pair that repeats the `diff --git` line above it. Keeps `/dev/null` headers, hunks, changes and context. |
+| `git-diff-headers` | 2 | Drops the `--- a/… / +++ b/…` pair that repeats the `diff --git` line above it, in the output of `git diff`/`show`/`log -p` and `gh pr diff`. Keeps `/dev/null` headers, hunks, changes and context. Since v2 it runs only when the output really is a patch, so header lines an agent grepped for are left alone. |
 
 Each file carries its own `[[tests]]` cases, so a filter documents its own behaviour and can be checked without installing it.
+
+They need Boost v0.13.20 or later: `git-diff-headers` uses `match_mode = "all"`, which older releases do not have.
 
 ## How these copies are produced
 
@@ -27,7 +29,7 @@ What that rewriting does, and does not, touch:
 
 - **Filter behaviour is never modified.** Only comments, `description` values and `[[tests]]` fixtures can be rewritten. Every field the engine acts on is copied byte-for-byte, and the published file is compared against the source structurally before it is written — if any behaviour field differs, nothing is published.
 - **Fixtures are realistic in shape, not literal.** The tests are derived from real recorded output, so their line shapes, column widths and failure structure are genuine. Identifiers that appeared in them have been replaced with neutral equivalents through a mapping that stays on the machine and is not part of this repository.
-- **Two gates run before anything is committed:** a scan for identifying or credential-shaped strings, and a run of every filter's own tests through the real `boost` binary under a throwaway `HOME`, which proves the published fixtures still produce their expected output.
+- **Two gates run before anything is committed:** a scan for identifying or credential-shaped strings, and a run of every filter through the real `boost` binary: `boost filters validate`, then its own tests under a throwaway `HOME`, which proves the published fixtures still produce their expected output.
 
 ## Installing
 
@@ -82,34 +84,40 @@ python3 skills/boost-filter-publish/scripts/verify_filters.py \
     --dir filters --commands skills/boost-filter-publish/reference/commands.toml
 ```
 
-This runs every filter's test cases through your own `boost` binary, each filter in isolation with the others disabled, and scans the files for anything that should not be published. It needs nothing from the machine these came from.
+Boost's own validator checks the same files:
+
+```bash
+for f in filters/*.toml; do boost filters validate "$f"; done
+```
+
+The script runs every filter's test cases through your own `boost` binary, each filter in isolation with the others disabled, and scans the files for anything that should not be published. It needs nothing from the machine these came from.
 
 ## Local impact
 
 <!-- metrics:start -->
 
-*Measured on the install these filters come from, over the last 30 days; refreshed automatically, last on 2026-09-15.*
+*Measured on the install these filters come from, over the last 30 days; refreshed automatically, last on 2026-09-16.*
 
 | | |
 |---|---|
-| Commands recorded | 109,292 |
-| Tokens removed from tool output | 28.8M |
+| Commands recorded | 109,848 |
+| Tokens removed from tool output | 28.9M |
 | Tokens never re-sent in later turns | 4.4B |
-| Estimated cost avoided | $21,898 |
-| Estimated CO₂e avoided | 919.7 kg |
+| Estimated cost avoided | $21,930 |
+| Estimated CO₂e avoided | 921.1 kg |
 
 These filters' own share of that, by filter:
 
 | Filter | Enabled | Events | Tokens before | Tokens after | Saved | Retrieves |
 |---|---|---:|---:|---:|---:|---:|
-| `git-diff-headers` | yes | 2,598 | 11.7M | 11.6M | 1% | 0 |
+| `git-diff-headers` | yes | 2,600 | 11.7M | 11.6M | 1% | 0 |
 | `unittest-rules` | yes | 4,028 | 4.6M | 4.5M | 3% | 6 |
 | `pytest-traceback-dedupe` | yes | 1,218 | 736.2K | 625.2K | 15% | 2 |
 | `lint-row-padding` | yes | 0 | 0 | 0 | — | 0 |
 | `pytest-core` | yes | 0 | 0 | 0 | — | 0 |
 | `testem-tap-passes` | yes | 0 | 0 | 0 | — | 0 |
 
-A retrieve count above zero means an agent had to recover output that a filter chain removed — the number these filters are tuned to keep at zero. Boost attributes a retrieve to every filter in the chain that handled the command, including filters that changed nothing ([jfrog/boost#85](https://github.com/jfrog/boost/issues/85)), so a count here is not proof that this filter was the one responsible.
+A retrieve count above zero means an agent had to recover output that a filter chain removed — the number these filters are tuned to keep at zero. Before Boost v0.13.20 a retrieve was attributed to every filter in the chain that handled the command, including filters that changed nothing ([jfrog/boost#85](https://github.com/jfrog/boost/issues/85), fixed 2026-09-16), so counts recorded before that release are not proof that this filter was the one responsible.
 
 Rows with no events have not yet matched a command inside the window — a filter added recently starts at zero and fills in as work runs.
 
@@ -131,11 +139,11 @@ It is written to be generic: the filter directory, the identifying terms and the
 
 ## Related upstream reports
 
-Four engine behaviours found while building these, reported against Boost v0.13.19:
+Four engine behaviours found while building these, reported against Boost v0.13.19. All four were closed as completed by JFrog on 2026-09-16:
 
-- [jfrog/boost#83](https://github.com/jfrog/boost/issues/83) — regex lookaheads are silently ignored in filters
-- [jfrog/boost#84](https://github.com/jfrog/boost/issues/84) — `match_command` and `match_output_select` combine with OR
-- [jfrog/boost#85](https://github.com/jfrog/boost/issues/85) — retrieve counts are attributed to every filter in a chain
-- [jfrog/boost#86](https://github.com/jfrog/boost/issues/86) — the retrieval marker can make short outputs larger
+- [x] [jfrog/boost#83](https://github.com/jfrog/boost/issues/83) — regex lookaheads are silently ignored in filters. *Fixed 2026-09-16 in v0.13.20*: filter validation now reports invalid regular expressions, and the `gha-log` rule was repaired.
+- [x] [jfrog/boost#84](https://github.com/jfrog/boost/issues/84) — `match_command` and `match_output_select` combine with OR. *Fixed 2026-09-16 in v0.13.20*: an opt-in matching mode now requires every selector to match.
+- [x] [jfrog/boost#85](https://github.com/jfrog/boost/issues/85) — retrieve counts are attributed to every filter in a chain. *Fixed 2026-09-16 in v0.13.20*: retrieves now go only to filters that changed the output.
+- [x] [jfrog/boost#86](https://github.com/jfrog/boost/issues/86) — the retrieval marker can make short outputs larger. *Fixed 2026-09-16 in v0.13.21*: the marker is skipped when it would make the output larger than the original.
 
-The first two shape how these filters are written: exclusions are expressed positively rather than with lookaheads, and a filter that must not touch someone else's output carries no output fingerprint at all.
+The first two shaped how these filters were written: exclusions are expressed positively rather than with lookaheads, and a filter that must not touch someone else's output carries no output fingerprint at all. After #84 was fixed, each filter was measured against a month of recorded commands to decide its selection mode. `git-diff-headers` now uses `match_mode = "all"`, with its command widened to every git or gh subcommand that prints a patch. `pytest-core` keeps `"any"` on purpose, because most of its savings come from pytest runs inside compound scripts. The other four stay command-only, because an output gate would have blocked only real test runs. The reasoning and the numbers are in each file's header comment.

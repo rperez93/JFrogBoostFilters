@@ -5,10 +5,16 @@ schema_version = 1
 # same entry would disable it too). A global filter with a builtin's name does
 # not shadow it — both run — so the fix has to be a separate filter.
 #
-# Boost ORs match_command with match_output_select, so — exactly like the
-# builtin — any output carrying a pytest summary/FAILED row is selected
-# whatever the command. The `::` carve-out below is what protects per-test rows
-# under that wide selection; it does not depend on the command.
+# match_mode = "any", declared on purpose: match_command OR match_output_select,
+# so — exactly like the builtin — any output carrying a pytest summary/FAILED
+# row is selected whatever the command. The `::` carve-out below is what
+# protects per-test rows under that wide selection; it does not depend on the
+# command. Boost v0.13.20 added match_mode = "all" (jfrog/boost#84); measured
+# against recorded pytest-shaped output it would drop 860 of 1,268 selected
+# events and 56% of the removable bytes — nearly all of them real pytest runs
+# inside compound scripts (patch-then-test, heredocs) that no whole-command
+# regex can safely describe. The rules are line-shaped and safe on their own,
+# so the wide selection stays.
 #
 # The builtin's only retrieve regressions (history 23528, 37901; both agents
 # retrieved with `--query PASSED`) came from one rule: `\[\s*\d+%\]$` is meant
@@ -40,6 +46,7 @@ schema_version = 1
 [filters.pytest-core]
 description = "Builtin pytest v2 minus its blind spots: drop preamble, per-file progress and titled banner chrome; keep per-test -v rows, -rA rows, bare rules, failures, tracebacks, summary."
 version = "1"
+match_mode = "any"
 match_command = '^\s*(?:(?:cd|pushd|export|source|\.|[A-Za-z_][A-Za-z0-9_]*=)(?:[^|;&\n]|>&)*(?:;|&&|\n)\s*)*(?:(?:[A-Za-z_][A-Za-z0-9_]*=[^\s|;&]*|timeout(?:(?:[ \t]|\\\n)+-[^\s|;&]+)*(?:[ \t]|\\\n)+[0-9][^\s|;&]*|env(?:(?:[ \t]|\\\n)+-u(?:[ \t]|\\\n)+[A-Za-z_][A-Za-z0-9_]*|(?:[ \t]|\\\n)+-[^\s|;&u][^\s|;&]*)*)(?:[ \t]|\\\n)+)*(?:(?:[^\s|;&]*/)?python3?(?:\.\d+)?(?:(?:[ \t]|\\\n)+-[^\s|;&m][^\s|;&]*(?:(?:[ \t]|\\\n)+[^\s|;&-][^\s|;&]*)?)*(?:[ \t]|\\\n)+-m(?:[ \t]|\\\n)+pytest|(?:uv|poetry|pipenv|pdm|hatch)(?:[ \t]|\\\n)+run(?:[ \t]|\\\n)+(?:(?:[^\s|;&]*/)?python3?(?:[ \t]|\\\n)+-m(?:[ \t]|\\\n)+)?pytest|(?:[^\s|;&]*/)?pytest)(?:(?:[ \t]|\\\n)+(?:[^\s|;&]+|[0-9]?>&[0-9]))*(?:[ \t]*\|[ \t]*(?:tail|head|tee|cat)(?:(?:[ \t]|\\\n)+(?:[^\s|;&]+|[0-9]?>&[0-9]))*)*[ \t]*\n?$'
 match_output_select = [
   'test session starts',

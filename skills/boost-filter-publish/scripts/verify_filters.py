@@ -12,6 +12,9 @@
    fixture is proved to still produce its expected output. A filter needs a probe
    command that its `match_command` selects; `commands.toml` supplies one per
    filter (`[commands]` / `[nomatch]`), defaulting to the filter's own name.
+   Each file must also pass `boost filters validate`, whose checks tighten with
+   Boost releases (v0.13.22 rejects `expect_match_output = true` on a filter
+   with no output selector).
 
 Exit code is non-zero if any gate fails.
 """
@@ -57,6 +60,8 @@ def engine_tests(dirpath: pathlib.Path, commands: dict) -> list[str]:
         return [f"boost binary not found at {BOOST}; set BOOST_EXE"]
     failures = []
     for path in sorted(dirpath.glob("*.toml")):
+        if subprocess.run([BOOST, "filters", "validate", str(path)], capture_output=True).returncode:
+            failures.append(f"{path.name}: `boost filters validate` failed")
         spec = tomllib.load(open(path, "rb"))
         name = next(iter(spec.get("filters", {})), None)
         if not name or name not in spec.get("tests", {}):

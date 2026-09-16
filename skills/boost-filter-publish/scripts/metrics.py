@@ -67,10 +67,10 @@ def render(totals: dict, rows: list, screenshot: str | None) -> str:
                          f"| {human(before)} | {human(after)} | {pct} | {r.get('retrieve_count', 0)} |")
         lines.append("")
         notes = ["A retrieve count above zero means an agent had to recover output that a filter chain removed — "
-                 "the number these filters are tuned to keep at zero. Boost attributes a retrieve to every filter "
-                 "in the chain that handled the command, including filters that changed nothing "
-                 "([jfrog/boost#85](https://github.com/jfrog/boost/issues/85)), so a count here is not proof that "
-                 "this filter was the one responsible."]
+                 "the number these filters are tuned to keep at zero. Before Boost v0.13.20 a retrieve was attributed "
+                 "to every filter in the chain that handled the command, including filters that changed nothing "
+                 "([jfrog/boost#85](https://github.com/jfrog/boost/issues/85), fixed 2026-09-16), so counts "
+                 "recorded before that release are not proof that this filter was the one responsible."]
         if any(not r.get("event_count") for r in rows):
             notes.append("Rows with no events have not yet matched a command inside the window — a filter added "
                          "recently starts at zero and fills in as work runs.")

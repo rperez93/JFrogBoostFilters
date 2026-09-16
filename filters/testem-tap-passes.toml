@@ -10,12 +10,15 @@ schema_version = 1
 # is ~2,230 rows / ~250 KB whose only content beyond `# pass 2230` is the list
 # of green names.
 #
-# Selection is by COMMAND ONLY. Boost ORs `match_command` with
-# `match_output_select` (probed: either alone activates a filter), so an output
-# fingerprint would also fire on `cat run.log` / `grep "^(ok|# tests)" run.log`
-# and strip rows an agent asked for. match_command is RE2 (no lookahead —
-# a `(?!` pattern silently never matches), so it is written positively and
-# anchored over the WHOLE command:
+# Selection is by COMMAND ONLY. Before Boost v0.13.20 `match_command` ORed with
+# `match_output_select` (jfrog/boost#84), so an output fingerprint would also
+# have fired on `cat run.log` / `grep "^(ok|# tests)" run.log` and stripped rows
+# an agent asked for. match_mode = "all" now allows a fingerprint as a gate, but
+# none is needed: the strip rule is already the TAP row shape, and a footer gate
+# would only skip aborted runs (see below). match_command is RE2 (no lookahead —
+# a `(?!` pattern never matches; Boost v0.13.20+ reports it at validation,
+# jfrog/boost#83), so it is written positively and anchored over the WHOLE
+# command:
 #   * optional setup segments only: `cd`, `pushd`, `export`, `source`, `VAR=…`
 #     joined by `;` / `&&` / newline;
 #   * then the suite runner itself: `npm test`, `npm run test[:x]`,
@@ -52,7 +55,6 @@ dedupe_lines_matching = [
 
 [[tests.testem-tap-passes]]
 name = "full run with two failures: green rows go, not ok rows + YAML blocks + footer stay (history 108421 shape)"
-expect_match_output = true
 input = """ok 13 Chrome 152.0 - [41 ms] - Integration | Component | acme-chat: the panel opens from the rail
 not ok 14 Chrome 152.0 - [111 ms] - Integration | Component | acme-chat: the screen context carries the route FILTERS and the visible SCREEN TEXT on every turn
     ---
@@ -122,7 +124,6 @@ not ok 37 Chrome 152.0 - [85 ms] - Integration | Component | acme-chat: closing 
 
 [[tests.testem-tap-passes]]
 name = "all green: build lines, console errors, first warn and the footer survive; repeated warn copies and ok rows go (history 88588 shape)"
-expect_match_output = true
 input = """> webapp@0.0.0 test
 > vite build --mode development && ember test --path dist --test-port=0
 ✓ 1646 modules transformed.
@@ -158,7 +159,6 @@ expected = """> webapp@0.0.0 test
 
 [[tests.testem-tap-passes]]
 name = "skip and todo rows are itemized and stay"
-expect_match_output = true
 input = """ok 1 Chrome 152.0 - [3 ms] - Unit | Utility | format-money: rounds half up
 ok 2 Chrome 152.0 - [0 ms] - Unit | Utility | format-money: locale-aware separators # skip
 ok 3 Chrome 152.0 - [0 ms] - Unit | Utility | format-money: currency codes # todo

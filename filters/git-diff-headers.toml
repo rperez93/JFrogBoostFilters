@@ -27,10 +27,26 @@ schema_version = 1
 # Complements (does not replace) the built-in `git-diff`. match_command
 # additionally accepts `git -C <dir> diff` (a flag with a separate argument)
 # and leading `VAR=value` assignments, both of which the built-in misses.
+#
+# v2 (2026-09-16): match_mode = "all" — the command AND the output must both
+# select (available since Boost v0.13.20; before it the two ORed, jfrog/boost#84).
+# Under v1's OR, a git diff command selected by itself, so header-shaped lines
+# were stripped from output that was not a diff at all: 17 of 1,955 recorded
+# command-selected events changed output with no `diff --git` in it, e.g. a
+# `grep` for `+++ b/` asked "which file is that hunk in?" and lost its answer.
+# The output fingerprint alone also selected 645 events whose command was not
+# `git diff` — `gh pr diff`, `git show`, `git log -p`, patch-producing scripts —
+# 27% of all header bytes, with 0 retrieves. So the command side is widened to
+# every git/gh subcommand that prints a patch (`diff`, `show`, `log`,
+# `stash show`, `format-patch`, `range-diff`, `gh pr diff`), also after a
+# newline, and the fingerprint now gates it. Replayed on the same history:
+# 99.8% of the header bytes v1 removed are still removed; the rest was `cat`
+# of saved patch files.
 [filters.git-diff-headers]
 description = "Drop the --- a/ +++ b/ file-header pair that repeats the diff --git line; keep /dev/null headers, hunks, changes, context."
-version = "1"
-match_command = '(^|[;&|]\s*)(?:[A-Za-z0-9_]+=\S+\s+)*(?:sudo\s+)?git(?:\s+(?:-[A-Za-z]\S*|--\S+)(?:\s+[^-\s]\S*)?)*\s+diff\b'
+version = "2"
+match_mode = "all"
+match_command = '(^|[;&|\n]\s*)(?:[A-Za-z0-9_]+=\S+\s+)*(?:sudo\s+)?(?:git(?:\s+(?:-[A-Za-z]\S*|--\S+)(?:\s+[^-\s]\S*)?)*\s+(?:diff|show|log|stash\s+show|format-patch|range-diff)\b|gh\s+pr\s+diff\b)'
 match_output_select = [
   '(?m)^diff --git ',
 ]
@@ -121,3 +137,13 @@ input = """ docs/webapp-frontend.md | 2 +-
 expected = """ docs/webapp-frontend.md | 2 +-
  docs/frontend.md      | 4 ++--
  2 files changed, 3 insertions(+), 3 deletions(-)"""
+
+[[tests.git-diff-headers]]
+name = "header lines grepped out of a diff are the answer, not diff chrome: no `diff --git`, not selected"
+expect_match_output = false
+input = """=== which file is that hunk in? ===
++++ b/docs/README.md
+@@ -24,8 +24,9 @@ ## Getting started"""
+expected = """=== which file is that hunk in? ===
++++ b/docs/README.md
+@@ -24,8 +24,9 @@ ## Getting started"""

@@ -23,9 +23,9 @@ schema_version = 1
 # line inside a frame as four spaces); true blank lines stay, matching the
 # built-in's readability choice.
 #
-# v2 (2026-09-15): selection is by COMMAND ONLY, strictly. Boost ORs
-# match_command with match_output_select (probed in a sandbox), and v1 had
-# both wide, so the dedupe ran over whatever else a command printed: in 14 of
+# v2 (2026-09-15): selection is by COMMAND ONLY, strictly. Boost (before
+# v0.13.20) ORed match_command with match_output_select, and v1 had both
+# wide, so the dedupe ran over whatever else a command printed: in 14 of
 # 110 recorded events that removed lines it deleted repeated lines from
 # `sed -n` source views (e.g. a second `    assert r.status_code == 200,
 # r.text` in a test file), `cat` output and chat messages quoting a pytest
@@ -36,6 +36,13 @@ schema_version = 1
 # run [python -m] pytest`, optionally piped to tail/head/tee/cat only (RE2,
 # anchored over the whole command). Heredoc scripts, `sed …; pytest`, and
 # `pytest | grep` no longer select.
+#
+# 2026-09-16: still command-only, on measurement. Boost v0.13.20 added
+# match_mode = "all" (jfrog/boost#84), so a pytest summary fingerprint could now
+# gate the command. Replayed on 1,936 recorded commands this regex selects,
+# a gate would have blocked 10 events that the dedupe changes — every one a
+# real pytest run with no summary line in its output. It would protect
+# nothing, so none is added.
 #
 # v2 also narrows the frame-body shape from "any 4-space-indented line of 35+
 # chars" to lines that read as Python source: an identifier/decorator path
@@ -63,7 +70,6 @@ dedupe_lines_matching = [
 
 [[tests.pytest-traceback-dedupe]]
 name = "second identical setup error keeps its >/E/footer lines, drops repeated frame body (report event 1202)"
-expect_match_output = true
 input = """ERROR at setup of test_ingest_row_counts
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
@@ -166,7 +172,6 @@ ERROR tests/data/test_ingest_query.py::test_ingest_is_idempotent - sqlite3.Datab
 
 [[tests.pytest-traceback-dedupe]]
 name = "distinct failures are untouched: short lines, >, E, assertion diffs and summary all survive"
-expect_match_output = true
 input = """FAILURES
 test_three
     def test_three():
@@ -216,7 +221,6 @@ expected = """Docs check: ok
 
 [[tests.pytest-traceback-dedupe]]
 name = "screens printed by a passing test keep their repeated hint rows (history 16526)"
-expect_match_output = true
 input = """  AFTER A JOIN:
     ! acting     1 unread — nobody has acted on them
     → __main__.py recv --limit 50, then DO what they ask
@@ -225,7 +229,6 @@ input = """  AFTER A JOIN:
     ! acting     1 unread — nobody has acted on them
     → __main__.py recv --limit 50, then DO what they ask
     fix these before you carry on — they are why the other agent is waiting
-    
 8 passed in 0.27s"""
 expected = """  AFTER A JOIN:
     ! acting     1 unread — nobody has acted on them
@@ -235,5 +238,4 @@ expected = """  AFTER A JOIN:
     ! acting     1 unread — nobody has acted on them
     → __main__.py recv --limit 50, then DO what they ask
     fix these before you carry on — they are why the other agent is waiting
-    
 8 passed in 0.27s"""

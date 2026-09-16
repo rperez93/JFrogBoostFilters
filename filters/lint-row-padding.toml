@@ -16,10 +16,12 @@ schema_version = 1
 # INSIDE a message is left alone (the rewrite anchors on the columns, not on
 # every space run). Rule names stay separated from the message by two spaces.
 #
-# Selected by COMMAND ONLY (Boost ORs match_command with match_output_select,
-# so no output fingerprint): setup segments, then `npm run lint[:x]` /
+# Selected by COMMAND ONLY: setup segments, then `npm run lint[:x]` /
 # `npx stylelint` / `npx eslint` / `npx ember-template-lint`, optionally piped
-# to tail/head/tee/cat — RE2, anchored over the whole command.
+# to tail/head/tee/cat — RE2, anchored over the whole command. No output
+# fingerprint: before Boost v0.13.20 one would have widened selection (OR), and
+# under match_mode = "all" it would add nothing — the replace rules already
+# require the problem-row grammar, so they are their own gate.
 [filters.lint-row-padding]
 description = "Collapse column padding in stylelint/eslint/template-lint problem rows of `npm run lint`; keep every row, position, severity, message and rule."
 version = "1"
@@ -43,7 +45,6 @@ replacement = "${1}  ${2}"
 
 [[tests.lint-row-padding]]
 name = "stylelint rows under concurrently: column and rule padding collapse, every field stays (history 86449)"
-expect_match_output = true
 input = """[lint:css] app/styles/deal-goals.css
 [lint:css]     1:14  ✖  Expected class selector ".deal-plan-v7__header" to be kebab-case                        selector-class-pattern
 [lint:css]     8:1   ✖  Expected empty line before rule                                                        rule-empty-line-before
@@ -61,7 +62,6 @@ expected = """[lint:css] app/styles/deal-goals.css
 
 [[tests.lint-row-padding]]
 name = "eslint error row, summary, prettier warnings and exit codes are kept; only column padding changes (history 86449 tail)"
-expect_match_output = true
 input = """[lint:css]   169:8   ✖  Expected "context" media feature range notation                                        media-feature-range-notation
 [lint:css]   213:25  ✖  Expected modern color-function notation                                                color-function-notation
 [lint:format] [warn] tests/unit/utils/live-stats-metrics-test.js
@@ -87,6 +87,5 @@ expected = """[lint:css] 169:8 ✖ Expected "context" media feature range notati
 
 [[tests.lint-row-padding]]
 name = "a double space inside a message is not a column gap and stays"
-expect_match_output = true
 input = """[lint:css]    12:3   ✖  Expected "a  b" to be "a b"                                   declaration-value-spacing"""
 expected = """[lint:css] 12:3 ✖ Expected "a  b" to be "a b"  declaration-value-spacing"""
