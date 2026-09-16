@@ -1,6 +1,6 @@
 ---
 name: boost-filter-publish
-description: Publish the local JFrog Boost filters to a shareable repository — copy them to a throwaway directory, replace local names and identifying details with neutral ones without changing filter behaviour, verify, refresh the README metrics from `boost report`, and commit. Use when the user asks to publish, update, share or sync their Boost filters, to scrub filters before sharing, or to refresh the filter repository's metrics or screenshot.
+description: Publish the local JFrog Boost filters to a shareable repository — copy them to a throwaway directory, replace local names and identifying details with neutral ones without changing filter behaviour, verify, refresh the README metrics from `boost report`, and commit. Use when the user asks to publish, update, share or sync their Boost filters, to scrub filters before sharing, to refresh the filter repository's metrics or screenshot, to choose a filter's `match_mode` after a Boost engine change, or to install the published copies back into `~/.boost/filters`.
 ---
 
 # Publishing Boost filters without publishing yourself
@@ -72,8 +72,23 @@ The leak scan looks for alias terms, the local user and host names, home paths,
 e-mail addresses, UUIDs and credential-shaped strings. The engine gate runs every
 filter's own test cases through the real `boost` binary under a throwaway `HOME`
 with all other filters disabled, which proves the scrubbed fixtures still produce
-their expected output. It also runs `boost filters validate` on each file, whose checks tighten
-between Boost releases — a filter set that passed last week can fail today. If either fails, fix and re-run — do not publish.
+their expected output. It also runs `boost filters validate` on each file, whose
+checks tighten between Boost releases — a filter set that passed last week can
+fail today. If either gate fails, fix it in the source and re-run. Do not publish.
+
+The two runners disagree in one known way. `boost filters validate` applies the
+filter as written, while a real run skips a filter whose saving is below Boost's
+minimum (roughly under 5 % and under 16 tokens) and returns the input unchanged.
+A small fixture can therefore pass one gate and fail the other. Write fixtures
+whose expected output holds under both, rather than editing `expected` until one
+passes.
+
+Before this step, also read the whole scrubbed output once — every fixture,
+not only the lines the scrub touched. The scans catch paths, e-mails, UUIDs and
+credential shapes; they cannot catch a product name, a business domain, a route
+name or a sentence copied from a private README. When you find one, fix it in
+the source (an alias, or invented text in a new fixture) and scrub again. The
+repository is public and its history keeps whatever was pushed.
 
 **4. Copy in and refresh the metrics.**
 
@@ -100,25 +115,80 @@ than reaching into the raw JSON.
 web app, so it needs a URL:
 
 ```bash
-boost ui -d 30 > /tmp/boost-ui.log 2>&1 &   # prints e.g. "Boost report web UI: http://127.0.0.1:PORT"
-sleep 5; grep -oE 'http://[0-9.]+:[0-9]+' /tmp/boost-ui.log
+# start the server as a background task (not `&` + `sleep` in the foreground);
+# it prints e.g. "Boost report web UI: http://127.0.0.1:PORT"
+boost ui -d 30 > "$WORK/boost-ui.log" 2>&1
+grep -oE 'http://[0-9.]+:[0-9]+' "$WORK/boost-ui.log"
 agent-browser open "<that url>"
 agent-browser set viewport 1600 1000 2
-agent-browser screenshot $REPO/docs/report-ui.png
-agent-browser close; pkill -f "boost ui"
+agent-browser wait --text "TOKENS SAVED"    # the page shows "Loading…" first; a large history takes a while
+agent-browser wait 3000
+agent-browser screenshot "$WORK/report-ui.png"   # view it, then copy to $REPO/docs/report-ui.png
+agent-browser close
+kill "$(pgrep -f '^boost ui -d 30')"
 ```
+
+Do not stop the server with `pkill -f "boost ui"`. That pattern also matches the
+shell whose command line contains it, and kills that shell too.
 
 **Look at the image before it is committed.** The dashboard mixes aggregate
 panels with lists that name real files, and other views show commands and
 conversation titles. Only the aggregate panels may be published: totals, the
 savings chart, the filter activity grid. If anything identifying is in frame,
 reframe or scroll and shoot again — do not commit a screenshot you have not
-viewed. If the page renders blank, the server has stopped; restart it.
+viewed. If the page renders blank, the server has stopped; restart it. If it still says
+"Loading…", it was captured too early: wait for the text again.
 
 **6. Commit and push.** Describe what changed — filters updated, metrics
 refreshed — without naming anything the scrub removed. The README may say that
 identifiers were replaced; it must never say what they were, and a diff of
 `filters/` must never be explained in terms of the originals.
+
+Stage the generated paths by name (`README.md dist docs filters skills`), not
+with `git add -A`. Other tools leave local state in the working tree (for
+example `.collab/`) that must not be pushed.
+
+**7. Installing the published copies locally (only when asked).** Filter
+behaviour in `filters/` is identical to `~/.boost/filters`; only comments,
+descriptions and fixtures differ. To make the install match the repository, back
+up first, then copy and validate:
+
+```bash
+cp -a ~/.boost/filters ~/.boost/backup-$(date +%Y%m%d)-pre-sync
+cp $REPO/filters/*.toml ~/.boost/filters/
+boost filters validate && boost filters show
+```
+
+After that the local fixtures carry the neutral names, so later scrubs of those
+lines are no-ops. That is expected.
+
+## Choosing how a filter is selected
+
+A filter is selected by `match_command`, by `match_output_select`, or by both.
+`match_mode` (Boost v0.13.20 and later) decides how the two combine:
+
+- `"any"`, the default: either one selects. An output fingerprint therefore
+  *widens* selection to every command whose output looks like the tool's.
+- `"all"`: both must match. The fingerprint *gates* the command.
+- no `match_output_select`: command-only.
+
+Decide from measurement, not from taste. The history database
+(`~/.local/share/boost/history.db`, table `commands`: `cmd`, `original_output`,
+`capability_id` naming the filters that ran) is enough. Open it read-only
+(`?mode=ro`). Replay each candidate mode's regexes over it in Python, and count
+the events and removable bytes each mode keeps or loses. Also look at a few
+events a stricter mode would block. For the six filters here, the answer
+differed per filter, and each file's header comment records the numbers.
+
+Tests follow from the mode. `boost filters validate` checks
+`expect_match_output` against `match_output_select` only; the test has no
+command. So a command-only filter must omit `expect_match_output = true`, and
+use `expect_match_output = false` only for input that must pass through
+unchanged. Record the minimum Boost version in the README when a filter uses a
+key that older releases lack.
+
+Write new fixtures from invented text in the shape of the real output. Do not
+paste private output into them.
 
 ## When a filter is added or changed locally
 
